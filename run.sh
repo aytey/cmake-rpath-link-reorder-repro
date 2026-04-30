@@ -1,15 +1,15 @@
 #!/bin/bash
-# Minimal standalone reproducer for a CMake/Ninja rpath-link reorder bug:
-# the first reconfigure after a successful from-scratch build flips the
-# order of paths in the auto-emitted -Wl,-rpath-link, flag, causing ninja
-# to relink consumers.  Subsequent reconfigures are stable (the relinked
-# command line agrees with the post-flip order, and the shadow file that
-# triggered the flip stays on disk).
+# Minimal standalone reproducer for a CMake/Ninja link-search-path reorder
+# bug: the first reconfigure after a successful from-scratch build flips the
+# order of paths in the auto-emitted -Wl,-rpath and -Wl,-rpath-link flags,
+# causing ninja to relink consumers.  Subsequent reconfigures are stable
+# (the relinked command line agrees with the post-flip order, and the shadow
+# file that triggered the flip stays on disk).
 #
 # Root cause is in cmOrderDirectoriesConstraint::FileMayConflict() in
 # Source/cmOrderDirectories.cxx: it reads the filesystem to decide whether
 # to add a conflict edge to the DFS topological sort that orders the
-# rpath-link directories.  When the build copies a shadow of an external's
+# search-path directories.  When the build copies a shadow of an external's
 # transitive runtime dep into the in-tree shared-lib directory, that
 # function flips its return value between the first and second configure.
 
@@ -32,8 +32,8 @@ mkdir -p "${EXT_DIR}"
 banner "Build the prebuilt 'external' libs.
        libext.so.1 has libext_internal.so.1 as a NEEDED entry, but
        libext_internal is not on the consumer's link line — so when CMake
-       walks deps, the consumer must put EXT_DIR into -Wl,-rpath-link, for
-       indirect-symbol resolution."
+       walks deps, the consumer must put EXT_DIR into its generated link
+       search-path flags for indirect-symbol resolution."
 gcc -fPIC -shared -Wl,-soname,libext_internal.so.1 \
     -o "${EXT_DIR}/libext_internal.so.1" ext_src/ext_internal.c
 gcc -fPIC -shared -Wl,-soname,libext.so.1 \
@@ -62,14 +62,14 @@ banner "ninja -n -d explain after configure 2"
 "${NINJA}" -C "${BUILD_DIR}" -n -d explain 2>&1 \
     | grep -E '^(ninja explain|\[)' || true
 
-banner "rpath-link lines that differ between cfg1 and cfg2"
+banner "link-search-path lines that differ between cfg1 and cfg2"
 DIFF="${BUILD_ROOT}/build.ninja.diff"
 diff "${BUILD_ROOT}/build.ninja.cfg1" "${BUILD_ROOT}/build.ninja.cfg2" \
     > "${DIFF}" || true
 if grep -qE '^[<>] *.*rpath-link' "${DIFF}"; then
     grep -E '^[<>] *.*rpath-link' "${DIFF}"
     echo
-    echo "*** BUG REPRODUCED: rpath-link order flipped between configures ***"
+    echo "*** BUG REPRODUCED: link search-path order flipped between configures ***"
     exit 0
 else
     echo "(no rpath-link diff in build.ninja — bug did NOT reproduce)"
