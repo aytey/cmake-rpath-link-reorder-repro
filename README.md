@@ -1,10 +1,17 @@
 # Minimal reproducer: CMake/Ninja rpath-link reorder relink storm
 
-A standalone CMake project that demonstrates an unwanted relink after a
-no-op `cmake -S … -B …` reconfigure.  The link command line for a shared
-library changes — but only the ordering of paths inside the auto-emitted
-`-Wl,-rpath-link,…` flag — and ninja therefore considers the library
-dirty and relinks it.
+A standalone CMake project that demonstrates an unwanted relink on the
+first no-op `cmake -S … -B …` reconfigure after a from-scratch build.
+The link command line for a shared library changes — but only the
+ordering of paths inside the auto-emitted `-Wl,-rpath-link,…` flag —
+and ninja therefore considers the library dirty and relinks it.
+
+The flip is one-shot, not a steady state: after the relink actually
+runs, ninja's `.ninja_log` records the new command line, and subsequent
+reconfigures stay stable (FileMayConflict's return value flipped on
+the cfg1→cfg2 boundary because the shadow file went from absent to
+present, but cfg2 onwards it stays present so the conflict graph
+doesn't change again).
 
 Confirmed against CMake 4.2.3 and 4.3.2 (the latest release).
 

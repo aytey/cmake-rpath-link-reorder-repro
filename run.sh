@@ -1,7 +1,10 @@
 #!/bin/bash
 # Minimal standalone reproducer for a CMake/Ninja rpath-link reorder bug:
-# every reconfigure after a successful build flips the order of paths in
-# the auto-emitted -Wl,-rpath-link, flag, causing ninja to relink consumers.
+# the first reconfigure after a successful from-scratch build flips the
+# order of paths in the auto-emitted -Wl,-rpath-link, flag, causing ninja
+# to relink consumers.  Subsequent reconfigures are stable (the relinked
+# command line agrees with the post-flip order, and the shadow file that
+# triggered the flip stays on disk).
 #
 # Root cause is in cmOrderDirectoriesConstraint::FileMayConflict() in
 # Source/cmOrderDirectories.cxx: it reads the filesystem to decide whether
