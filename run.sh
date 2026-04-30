@@ -36,11 +36,9 @@ banner "Build the prebuilt 'external' libs.
        indirect-symbol resolution."
 gcc -fPIC -shared -Wl,-soname,libext_internal.so.1 \
     -o "${EXT_DIR}/libext_internal.so.1" ext_src/ext_internal.c
-ln -sf libext_internal.so.1 "${EXT_DIR}/libext_internal.so"
 gcc -fPIC -shared -Wl,-soname,libext.so.1 \
     -o "${EXT_DIR}/libext.so.1" ext_src/ext.c \
-    -L"${EXT_DIR}" -Wl,-rpath-link,"${EXT_DIR}" -lext_internal
-ln -sf libext.so.1 "${EXT_DIR}/libext.so"
+    "${EXT_DIR}/libext_internal.so.1"
 
 banner "Configure 1 (from-scratch)"
 "${CMAKE}" -S . -B "${BUILD_DIR}" -G Ninja -DEXT_DIR="${EXT_DIR}"

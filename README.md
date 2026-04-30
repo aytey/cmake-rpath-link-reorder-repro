@@ -13,7 +13,7 @@ the cfg1→cfg2 boundary because the shadow file went from absent to
 present, but cfg2 onwards it stays present so the conflict graph
 doesn't change again).
 
-Confirmed against CMake 4.2.3 and 4.3.2 (the latest release).
+Confirmed against CMake 4.2.3 and 4.3.2.
 
 ## Run it
 
@@ -85,7 +85,7 @@ consumer of the affected library.
 CMAKE_SKIP_RPATH = ON                       (forces rpath-link emission)
 
   inner_priv (SHARED, IN_TREE_DIR, leaf)
-       ^                                     libinner.so.1 NEEDS libinner_priv.so.1
+       ^                                     libinner.so NEEDS libinner_priv.so
        │ PRIVATE                             but inner_priv is not on consumer's
        │                                     direct link line, so IN_TREE_DIR
   inner      (SHARED, IN_TREE_DIR)            ends up in -Wl,-rpath-link,
@@ -95,27 +95,24 @@ CMAKE_SKIP_RPATH = ON                       (forces rpath-link emission)
   consumer   (SHARED, target whose link
               command flips)
 
-  Ext_internal (IMPORTED SHARED in EXT_DIR)
-       ^                                     libext.so.1 NEEDS libext_internal.so.1
-       │ via IMPORTED_LINK_DEPENDENT_LIBRARIES via IMPORTED_LINK_DEPENDENT_LIBRARIES
-       │ on Ext                              so EXT_DIR ends up in rpath-link
-       │
-  Ext          (IMPORTED SHARED in EXT_DIR)
+  Ext       (IMPORTED SHARED in EXT_DIR)     libext.so.1 NEEDS libext_internal.so.1
        ^
-       │ PRIVATE
+       │ PRIVATE                             and IMPORTED_LINK_DEPENDENT_LIBRARIES
+       │                                     names libext_internal.so.1, so
+       │                                     EXT_DIR ends up in rpath-link
        │
   consumer
 ```
 
 After the build, the shadow step copies `libext_internal.so.1` from
-`EXT_DIR` into `IN_TREE_DIR`.  Configure 2 then sees the same SONAME-bearing
-file in two different on-disk locations, both of which are in the rpath-link
-candidate set, and adds a conflict edge that flips the topological sort.
+`EXT_DIR` into `IN_TREE_DIR`.  Configure 2 then sees the same file in two
+different on-disk locations, both of which are in the rpath-link candidate
+set, and adds a conflict edge that flips the topological sort.
 
 ## Files
 
 ```
-CMakeLists.txt         project definition (~70 lines, mostly comments)
+CMakeLists.txt         project definition (~65 lines, mostly comments)
 src/inner_priv.c       leaf in-tree shared lib
 src/inner.c            in-tree shared lib that PRIVATE-links inner_priv
 src/consumer.c         the relink target — SHARED lib that PRIVATE-links

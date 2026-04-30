@@ -1,79 +1,64 @@
 cmake_minimum_required(VERSION 3.20)
 project(rpath_reorder_min C)
 
-set(CMAKE_BUILD_TYPE Debug)
-
-# Switch CMake from baking DT_RPATH to emitting -Wl,-rpath-link, for
-# link-time indirect-symbol resolution.  This is what puts the bug in the
-# open: the rpath-link directory list is computed by an order-sensitive
-# topological sort whose conflict graph is filesystem-dependent.
+# Disable runtime RPATH handling so the generated link line exposes the
+# auto-computed `-Wl,-rpath-link,...` directories.  The repro is that this
+# directory ordering changes between the first and second configure because
+# CMake's ordering logic consults filesystem state.
 set(CMAKE_SKIP_RPATH ON)
 
 set(IN_TREE_DIR "${CMAKE_BINARY_DIR}/in_tree_lib")
 
 # Two in-tree shared libs.  `inner` PRIVATE-links `inner_priv`, so
-# libinner.so.1 has libinner_priv.so.1 as a NEEDED entry but inner_priv is
-# not exposed to consumers.  When `consumer` is linked against `inner`
-# directly, the linker reads libinner.so.1, sees it NEEDS libinner_priv.so.1,
-# and must search for it for indirect-symbol resolution — which is what
-# forces CMake to add IN_TREE_DIR to the auto-emitted -Wl,-rpath-link, list.
+# `libinner.so` has `libinner_priv.so` as a NEEDED entry, but
+# `inner_priv` is not on a consumer's direct link line.  When `consumer`
+# links to `inner`, the linker still has to find `libinner_priv.so` for
+# indirect-symbol resolution, which is why CMake adds `IN_TREE_DIR` to the
+# generated `-Wl,-rpath-link,...` list.
 add_library(inner_priv SHARED src/inner_priv.c)
 set_target_properties(inner_priv PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${IN_TREE_DIR}"
-    VERSION 1.0  SOVERSION 1)
+    LIBRARY_OUTPUT_DIRECTORY "${IN_TREE_DIR}")
 
 add_library(inner SHARED src/inner.c)
 set_target_properties(inner PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${IN_TREE_DIR}"
-    VERSION 1.0  SOVERSION 1)
+    LIBRARY_OUTPUT_DIRECTORY "${IN_TREE_DIR}")
 target_link_libraries(inner PRIVATE inner_priv)
 
-# One imported external `Ext` whose IMPORTED_LINK_DEPENDENT_LIBRARIES
-# property names a sibling `Ext_internal` in the same external dir.
-# Ext_internal is the SONAME-bearing lib that flows through
-# cmOrderDirectoriesConstraint::FileMayConflict() — it's a transitive
-# runtime dep of Ext, not on the consumer's direct link line, so its dir
-# must be added to rpath-link.
-add_library(Ext_internal SHARED IMPORTED GLOBAL)
-set_target_properties(Ext_internal PROPERTIES
-    IMPORTED_LOCATION "${EXT_DIR}/libext_internal.so.1"
-    IMPORTED_SONAME   libext_internal.so.1)
-
-add_library(Ext SHARED IMPORTED GLOBAL)
+# One imported external `Ext` whose `IMPORTED_LINK_DEPENDENT_LIBRARIES`
+# names a sibling library in the same external dir.  That indirect shared-
+# library dependency brings `EXT_DIR` into the generated
+# `-Wl,-rpath-link,...` list, even though it is not on the consumer's
+# direct link line.
+add_library(Ext SHARED IMPORTED)
 set_target_properties(Ext PROPERTIES
     IMPORTED_LOCATION                 "${EXT_DIR}/libext.so.1"
-    IMPORTED_SONAME                   libext.so.1
-    IMPORTED_LINK_DEPENDENT_LIBRARIES "Ext_internal")
+    IMPORTED_LINK_DEPENDENT_LIBRARIES "${EXT_DIR}/libext_internal.so.1")
 
-# `consumer` is the SHARED lib whose link command will flip between cfg1
-# and cfg2 once the shadow copy lands in IN_TREE_DIR.  It PRIVATE-links
-# both inner and Ext.  Both contribute a directory to rpath-link:
-#   - inner's NEEDED entry libinner_priv.so.1 is in IN_TREE_DIR
-#   - Ext's IMPORTED_LINK_DEPENDENT_LIBRARIES (Ext_internal) is in EXT_DIR
+# `consumer` is the shared library whose link command changes between cfg1
+# and cfg2 once the shadow copy lands in `IN_TREE_DIR`.  It PRIVATE-links
+# both `inner` and `Ext`, so both directories appear in `-Wl,-rpath-link,...`:
+#   - `inner` contributes `IN_TREE_DIR` via `libinner_priv.so`
+#   - `Ext` contributes `EXT_DIR` via `libext_internal.so.1`
 add_library(consumer SHARED src/consumer.c)
 target_link_libraries(consumer PRIVATE inner Ext)
 
-# Distribution-layout shadowing.  After the in-tree libs are built, copy
-# libext_internal.so.1 from EXT_DIR into IN_TREE_DIR.  This is the trigger:
+# Simulate a distribution layout step by copying `libext_internal.so.1`
+# from `EXT_DIR` into `IN_TREE_DIR` after the first build.
+# This changes the filesystem state that CMake sees on the next configure.
 #
-#   - Configure 1 (fresh): IN_TREE_DIR contains no copy of libext_internal.so.1.
-#     FileMayConflict() hits its GEN_NOT_PLANNED branch and returns FALSE.
-#     No conflict edge added.  IN_TREE_DIR is sorted FIRST in -Wl,-rpath-link,
+#   - Configure 1 (fresh): `IN_TREE_DIR` does not contain
+#     `libext_internal.so.1`, so no ordering constraint is added between
+#     `EXT_DIR` and `IN_TREE_DIR`.
 #
-#   - Build runs.  The shadow step copies libext_internal.so.1 into IN_TREE_DIR.
+#   - Build runs.  A post-build step copies `libext_internal.so.1` into
+#     `IN_TREE_DIR`.
 #
-#   - Configure 2: libext_internal.so.1 now exists on disk in IN_TREE_DIR
-#     as a different physical inode from EXT_DIR's copy.  FileMayConflict()
-#     hits its DISK_DIFFERENT branch and returns TRUE.  A conflict edge
-#     "EXT_DIR before IN_TREE_DIR" is added.  IN_TREE_DIR is sorted LAST.
-#     consumer's link command line changes; ninja relinks it.
-set(STAMP "${CMAKE_BINARY_DIR}/.shadow.stamp")
-add_custom_command(OUTPUT "${STAMP}"
+#   - Configure 2: `libext_internal.so.1` now exists in both directories
+#     as two different files, so CMake adds an ordering constraint that
+#     places `EXT_DIR` before `IN_TREE_DIR`.  The `-Wl,-rpath-link,...`
+#     flag changes, and Ninja relinks `consumer`.
+add_custom_command(TARGET consumer POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy
         "${EXT_DIR}/libext_internal.so.1"
         "${IN_TREE_DIR}/libext_internal.so.1"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${STAMP}"
-    DEPENDS inner inner_priv
     COMMENT "Shadowing libext_internal.so.1 into ${IN_TREE_DIR}")
-add_custom_target(shadow_external_internal_into_in_tree_dir ALL
-    DEPENDS "${STAMP}")
