@@ -41,16 +41,16 @@ target_link_libraries(consumer PRIVATE inner Ext)
 # This changes the filesystem state that CMake sees on the next configure.
 #
 #   - Configure 1 (fresh): `IN_TREE_DIR` does not contain
-#     `libext_internal.so.1`, so no ordering constraint is added between
-#     `EXT_DIR` and `IN_TREE_DIR`.
+#     `libext_internal.so.1`, and the generated link command currently puts
+#     `IN_TREE_DIR` before `EXT_DIR` in its search-path flags.
 #
 #   - Build runs.  A post-build step copies `libext_internal.so.1` into
 #     `IN_TREE_DIR`.
 #
 #   - Configure 2: `libext_internal.so.1` now exists in both directories
-#     as two different files, so CMake adds an ordering constraint that
-#     places `EXT_DIR` before `IN_TREE_DIR`.  The generated link command
-#     changes, and Ninja relinks `consumer`.
+#     as two different files.  The generated link command changes so that
+#     `EXT_DIR` appears before `IN_TREE_DIR` in the search-path flags, and
+#     Ninja relinks `consumer`.
 add_custom_command(TARGET consumer POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy
         "${EXT_DIR}/libext_internal.so.1"
